@@ -18,6 +18,10 @@ type VRObjectConfig = {
 	HoverEnd : boolean?,
 }
 
+type AvailableEventNames =
+	'UserCFrameChanged' | 'UserCFrameEnabled' | 'NavigationRequested' | 'TouchpadModeChanged' | 'InputBegan' | 'InputEnded' |
+	'PressObjectAction' | 'HoldObjectAction' | 'ReleaseObjectAction' | 'OnObjectHoverEnter' | 'OnObjectHoverMove' | 'OnObjectHoverLeave'
+
 -- // Module // --
 local Module = {}
 
@@ -35,13 +39,21 @@ Module.Events = {
 	OnObjectHoverEnter = SignalClassModule.New(),
 	OnObjectHoverMove = SignalClassModule.New(),
 	OnObjectHoverLeave = SignalClassModule.New(),
+
+	VRObjectAdded = SignalClassModule.New(),
+	VRObjectRemoved = SignalClassModule.New(),
 }
 
-function Module:OnSignalEvent(EventName, ...) : { RBXScriptConnection }
+function Module:OnSignalEvent(EventName : AvailableEventNames, ...) : { RBXScriptConnection }
 	local Connections = {}
 	local CallbackEventClass = Module.Events[EventName]
 	if CallbackEventClass then
 		for _, callback in ipairs( {...} ) do
+			-- ignore anything that is not a function
+			if typeof(callback) ~= 'function' then
+				continue
+			end
+			-- pcall to prevent errors from stopping the loop
 			local success, err = pcall(function()
 				table.insert( Connections, CallbackEventClass:Connect(callback) )
 			end)
@@ -53,11 +65,19 @@ function Module:OnSignalEvent(EventName, ...) : { RBXScriptConnection }
 	return Connections
 end
 
+function Module:FireSignal(EventName : AvailableEventNames, ...)
+	local CallbackEventClass = Module.Events[EventName]
+	if CallbackEventClass then
+		CallbackEventClass:Fire(...)
+	end
+end
+
 if RunService:IsServer() then
+
+	local Players = game:GetService('Players')
 
 	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig)
 		-- set properties
-
 		TargetInstance:SetAttribute('ServerVRObject', true)
 		CollectionService:AddTag(TargetInstance, 'ServerVRObject')
 	end
@@ -68,14 +88,22 @@ if RunService:IsServer() then
 		-- remove properties
 	end
 
-	function Module:PreventPlayerMovement(Enabled, TargetPlayers)
+	function Module:ToggleVRMovement(Enabled, TargetPlayers)
 		if TargetPlayers then
 			for _, LocalPlayer in ipairs( TargetPlayers ) do
+				LocalPlayer:SetAttribute('VRMovement', Enabled)
 				VREvent:FireClient(LocalPlayer, 'MovementToggle', Enabled)
 			end
 		else
 			VREvent:FireAllClients('MovementToggle', Enabled)
+			for _, LocalPlayer in ipairs( Players:GetPlayers() ) do
+				LocalPlayer:SetAttribute('VRMovement', Enabled)
+			end
 		end
+	end
+
+	function Module:AddExtensionSystem(extensionModule)
+		extensionModule:Init(Module)
 	end
 
 else
@@ -130,6 +158,13 @@ else
 
 	function Module:Disable()
 		Module.VRMaid:Cleanup()
+	end
+
+	function Module:AddExtensionSystem(extensionModule)
+		extensionModule:Init(Module)
+		if Module.VREnabled then
+			extensionModule:Start()
+		end
 	end
 
 	VREvent.OnClientEvent:Connect(function(Job, ...)

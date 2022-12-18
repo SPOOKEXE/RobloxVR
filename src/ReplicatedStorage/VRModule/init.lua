@@ -76,16 +76,27 @@ if RunService:IsServer() then
 
 	local Players = game:GetService('Players')
 
-	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig)
-		-- set properties
+	local ActiveVRObjectConfig = {}
+
+	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig, overwriteEntireTable : boolean?)
+		if overwriteEntireTable or (not ActiveVRObjectConfig[TargetInstance]) then
+			ActiveVRObjectConfig[TargetInstance] = { }
+		end
+		for propertyName, propertyValue in pairs( PropertyTable ) do
+			ActiveVRObjectConfig[TargetInstance][propertyName] = propertyValue
+		end
 		TargetInstance:SetAttribute('ServerVRObject', true)
 		CollectionService:AddTag(TargetInstance, 'ServerVRObject')
+	end
+
+	function Module:GetActiveVRObjectConfig(TargetInstance)
+		return ActiveVRObjectConfig[TargetInstance]
 	end
 
 	function Module:RemoveVRObject(TargetInstance)
 		TargetInstance:SetAttribute('ServerVRObject', nil)
 		CollectionService:RemoveTag(TargetInstance, 'ServerVRObject')
-		-- remove properties
+		ActiveVRObjectConfig[TargetInstance] = nil
 	end
 
 	function Module:ToggleVRMovement(Enabled, TargetPlayers)
@@ -112,17 +123,32 @@ else
 	--local ContextActionService = game:GetService('ContextActionService')
 	local UserInputService = game:GetService('UserInputService')
 
+	local ActiveVRObjectConfig = {}
+
 	Module.VRMaid = MaidClassModule.New()
 	Module.VREnabled = false
 
-	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig)
+	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig, overwriteEntireTable : boolean?)
+		if overwriteEntireTable or (not ActiveVRObjectConfig[TargetInstance]) then
+			ActiveVRObjectConfig[TargetInstance] = { }
+		end
+		for propertyName, propertyValue in pairs( PropertyTable ) do
+			ActiveVRObjectConfig[TargetInstance][propertyName] = propertyValue
+		end
 		TargetInstance:SetAttribute('ClientVRObject', true)
+		CollectionService:AddTag(TargetInstance, 'ClientVRObject')
+		VREvent:FireAllClients('SetVRObjectConfig', TargetInstance, PropertyTable, overwriteEntireTable)
+	end
 
+	function Module:GetActiveVRObjectConfig(TargetInstance)
+		return ActiveVRObjectConfig[TargetInstance]
 	end
 
 	function Module:RemoveVRObject(TargetInstance)
 		TargetInstance:SetAttribute('ClientVRObject', nil)
-		
+		CollectionService:RemoveTag(TargetInstance, 'ClientVRObject')
+		ActiveVRObjectConfig[TargetInstance] = nil
+		VREvent:FireAllClients('RemoveVRObjectConfig', TargetInstance)
 	end
 
 	function Module:Enable()
@@ -144,15 +170,15 @@ else
 		end))
 
 		Module.VRMaid:Give(VRService.TouchpadModeChanged:Connect(function(TouchpadEnum, TouchpadModeEnum)
-			VREvent:FireServer('TouchpadModeChanged', userCFrameEnum, cframeValue)
+			VREvent:FireServer('TouchpadModeChanged', TouchpadEnum, TouchpadModeEnum)
 		end))
 
 		Module.VRMaid:Give(UserInputService.InputBegan:Connect(function(InputObject, WasProcessed)
-			
+			VREvent:FireServer('InputBegan', InputObject, WasProcessed)
 		end))
 
 		Module.VRMaid:Give(UserInputService.InputEnded:Connect(function(InputObject, WasProcessed)
-			
+			VREvent:FireServer('InputEnded', InputObject, WasProcessed)
 		end))
 	end
 
@@ -168,8 +194,12 @@ else
 	end
 
 	VREvent.OnClientEvent:Connect(function(Job, ...)
-		local Args = {...}
-
+		--local Args = {...}
+		if Job == 'SetVRObjectConfig' then
+			Module:SetVRObjectConfig(...)
+		elseif Job == 'RemoveVRObjectConfig' then
+			Module:RemoveVRObject(...)
+		end
 	end)
 
 	VRFunction.OnClientInvoke = function(Job, ...)

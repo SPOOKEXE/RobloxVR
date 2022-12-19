@@ -26,6 +26,8 @@ type AvailableEventNames =
 local Module = {}
 
 Module.Events = {
+	VREnableToggle = SignalClassModule.New(),
+	
 	UserCFrameChanged = SignalClassModule.New(),
 	UserCFrameEnabled = SignalClassModule.New(),
 	NavigationRequested = SignalClassModule.New(),
@@ -78,6 +80,10 @@ if RunService:IsServer() then
 
 	local ActiveVRObjectConfig = {}
 
+	function Module:DoesPlayerHaveVREnabled(LocalPlayer)
+		return LocalPlayer:GetAttribute('VREnabled')
+	end
+
 	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig, overwriteEntireTable : boolean?)
 		if overwriteEntireTable or (not ActiveVRObjectConfig[TargetInstance]) then
 			ActiveVRObjectConfig[TargetInstance] = { }
@@ -117,6 +123,48 @@ if RunService:IsServer() then
 		extensionModule:Init(Module)
 	end
 
+	local function HasArgTypes(OrderedArgs, OrderedTypes)
+		for index = 1, #OrderedArgs do
+			local compareTo = OrderedTypes[index] or OrderedTypes[#OrderedTypes]
+			if OrderedTypes[index] and ( typeof(OrderedArgs[index]) ~= compareTo) then
+				return false
+			end
+		end
+		return true
+	end
+
+	local function ValidateInputObjectTable(Tbl)
+		return HasArgTypes({Tbl, Tbl.KeyCode, Tbl.UserInputType}, {'EnumItem'})
+	end
+
+	VREvent.OnServerEvent:Connect(function(LocalPlayer, Job, ...)
+		local Args = {...}
+		if Job == 'ToggleVR' and HasArgTypes(Args, {'boolean'}) then
+			LocalPlayer:SetAttribute('VREnabled', Args[1])
+			Module:FireSignal('VREnableToggle', LocalPlayer, ...)
+		elseif Job == 'UserCFrameEnabled' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
+			Module:FireSignal('UserCFrameEnabled', LocalPlayer, ...)
+		elseif Job == 'UserCFrameChanged' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
+			Module:FireSignal('UserCFrameChanged', LocalPlayer, ...)
+		elseif Job == 'NavigationRequested' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
+			Module:FireSignal('NavigationRequested', LocalPlayer, ...)
+		elseif Job == 'TouchpadModeChanged' and HasArgTypes(Args, {'EnumItem', 'EnumItem'}) then
+			Module:FireSignal('TouchpadModeChanged', LocalPlayer, ...)
+		elseif Job == 'TouchpadModeChanged' and HasArgTypes(Args, {'table', 'table'}) then
+			Module:FireSignal('TouchpadModeChanged', LocalPlayer, ...)
+		elseif Job == 'InputBegan' and HasArgTypes(Args, {'table', 'boolean'}) and ValidateInputObjectTable(Args[1]) then
+			Module:FireSignal('InputBegan', LocalPlayer, ...)
+		elseif Job == 'InputEnded' and HasArgTypes(Args, {'table', 'boolean'}) and ValidateInputObjectTable(Args[1]) then
+			Module:FireSignal('InputEnded', LocalPlayer, ...)
+		end
+	end)
+
+	VRFunction.OnServerInvoke = function(LocalPlayer, Job, ...)
+		-- local Args = {...}
+
+		return false
+	end
+
 else
 
 	local VRService = game:GetService('VRService')
@@ -151,18 +199,23 @@ else
 		VREvent:FireAllClients('RemoveVRObjectConfig', TargetInstance)
 	end
 
+	local function InputObjectToTable(InputObject)
+		return {KeyCode = InputObject.KeyCode, UserInputType = InputObject.UserInputType}
+	end
+
 	function Module:Enable()
 		if Module.VREnabled then
 			return
 		end
 		Module.VREnabled = true
-
-		Module.VRMaid:Give(VRService.UserCFrameChanged:Connect(function(userCFrameEnum, cframeValue)
-			VREvent:FireServer('UserCFrameChanged', userCFrameEnum, cframeValue)
-		end))
+		VREvent:FireServer('VRToggle', true)
 
 		Module.VRMaid:Give(VRService.UserCFrameEnabled:Connect(function(userCFrameEnum, isEnabled)
 			VREvent:FireServer('UserCFrameEnabled', userCFrameEnum, isEnabled)
+		end))
+
+		Module.VRMaid:Give(VRService.UserCFrameChanged:Connect(function(userCFrameEnum, cframeValue)
+			VREvent:FireServer('UserCFrameChanged', userCFrameEnum, cframeValue)
 		end))
 
 		Module.VRMaid:Give(VRService.NavigationRequested:Connect(function(cframeValue, userCFrameEnum)
@@ -174,12 +227,16 @@ else
 		end))
 
 		Module.VRMaid:Give(UserInputService.InputBegan:Connect(function(InputObject, WasProcessed)
-			VREvent:FireServer('InputBegan', InputObject, WasProcessed)
+			VREvent:FireServer('InputBegan', InputObjectToTable(InputObject), WasProcessed)
 		end))
 
 		Module.VRMaid:Give(UserInputService.InputEnded:Connect(function(InputObject, WasProcessed)
-			VREvent:FireServer('InputEnded', InputObject, WasProcessed)
+			VREvent:FireServer('InputEnded', InputObjectToTable(InputObject), WasProcessed)
 		end))
+
+		Module.VRMaid:Give(function()
+			VREvent:FireServer('VRToggle', false)
+		end)
 	end
 
 	function Module:Disable()

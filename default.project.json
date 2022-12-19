@@ -1,16 +1,11 @@
 {
-	"name": "mmorpg-priv",
+	"name": "roblox-vr",
 	"tree": {
 		"$className": "DataModel",
 		"ReplicatedStorage": {
 			"$className": "ReplicatedStorage",
 			"$ignoreUnknownInstances": true,
-			"$path": "src/ReplicatedStorage",
-			"Assets": {
-				"$className": "Folder",
-				"$ignoreUnknownInstances": true,
-				"$path": "assets/ReplicatedStorage"
-			}
+			"$path" : "src/ReplicatedStorage"
 		},
 		"ServerScriptService": {
 			"$className": "ServerScriptService",
@@ -20,12 +15,7 @@
 		"ServerStorage": {
 			"$className": "ServerStorage",
 			"$ignoreUnknownInstances": true,
-			"$path": "src/ServerStorage",
-			"Assets": {
-				"$className": "Folder",
-				"$ignoreUnknownInstances": true,
-				"$path": "assets/ServerStorage"
-			}
+			"$path": "src/ServerStorage"
 		},
 		"StarterPlayer": {
 			"$className": "StarterPlayer",

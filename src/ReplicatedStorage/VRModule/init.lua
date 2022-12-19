@@ -22,12 +22,16 @@ type AvailableEventNames =
 	'UserCFrameChanged' | 'UserCFrameEnabled' | 'NavigationRequested' | 'TouchpadModeChanged' | 'InputBegan' | 'InputEnded' |
 	'PressObjectAction' | 'HoldObjectAction' | 'ReleaseObjectAction' | 'OnObjectHoverEnter' | 'OnObjectHoverMove' | 'OnObjectHoverLeave'
 
+local ExtensionModules = {}
+
 -- // Module // --
 local Module = {}
 
+Module.SharedModules = SharedModules
+
 Module.Events = {
 	VREnableToggle = SignalClassModule.New(),
-	
+
 	UserCFrameChanged = SignalClassModule.New(),
 	UserCFrameEnabled = SignalClassModule.New(),
 	NavigationRequested = SignalClassModule.New(),
@@ -78,10 +82,28 @@ if RunService:IsServer() then
 
 	local Players = game:GetService('Players')
 
+	local ServerModules = require(script.Server)
+
 	local ActiveVRObjectConfig = {}
+
+	Module.ServerModules = ServerModules
 
 	function Module:DoesPlayerHaveVREnabled(LocalPlayer)
 		return LocalPlayer:GetAttribute('VREnabled')
+	end
+
+	function Module:SetVRObjectOwnership(TargetInstance, OwnerInstance)
+		local Descendants = TargetInstance:GetDescendants()
+		table.insert(Descendants, TargetInstance)
+		for _, basePart in ipairs( Descendants ) do
+			if basePart:IsA('BasePart') then
+				if basePart.Anchored then
+					warn('BasePart is anchored, cannot set network ownership: ', basePart:GetFullName())
+					continue
+				end
+				basePart:SetNetworkOwner(OwnerInstance)
+			end
+		end
 	end
 
 	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig, overwriteEntireTable : boolean?)
@@ -120,6 +142,7 @@ if RunService:IsServer() then
 	end
 
 	function Module:AddExtensionSystem(extensionModule)
+		table.insert(ExtensionModules, extensionModule)
 		extensionModule:Init(Module)
 	end
 
@@ -171,8 +194,11 @@ else
 	--local ContextActionService = game:GetService('ContextActionService')
 	local UserInputService = game:GetService('UserInputService')
 
+	local ClientModules = require(script.Client)
+
 	local ActiveVRObjectConfig = {}
 
+	Module.ClientModules = ClientModules
 	Module.VRMaid = MaidClassModule.New()
 	Module.VREnabled = false
 
@@ -207,6 +233,8 @@ else
 		if Module.VREnabled then
 			return
 		end
+		print(script.Name, 'Enabled')
+
 		Module.VREnabled = true
 		VREvent:FireServer('VRToggle', true)
 
@@ -236,15 +264,24 @@ else
 
 		Module.VRMaid:Give(function()
 			VREvent:FireServer('VRToggle', false)
+			for _, extension in ipairs( ExtensionModules ) do
+				extension:Disable()
+			end
 		end)
+
+		for _, extension in ipairs( ExtensionModules ) do
+			extension:Enable()
+		end
 	end
 
 	function Module:Disable()
+		print(script.Name, 'Disabled')
 		Module.VRMaid:Cleanup()
 	end
 
 	function Module:AddExtensionSystem(extensionModule)
 		extensionModule:Init(Module)
+		table.insert(ExtensionModules, extensionModule)
 		if Module.VREnabled then
 			extensionModule:Start()
 		end

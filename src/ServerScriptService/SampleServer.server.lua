@@ -6,6 +6,10 @@ local VRCharacter = require(ReplicatedStorage:WaitForChild('VRCharacter'))
 
 VRModule:AddExtensionSystem( VRCharacter )
 
+VRModule:OnSignalEvent('VREnableToggle', function(LocalPlayer, VREnabled)
+	print(LocalPlayer.Name, 'has', VREnabled and 'enabled' or 'disabled', 'VR')
+end)
+
 local AssetsFolder = ReplicatedStorage.Assets
 local SampleVRSword = AssetsFolder.Weapons.GreatSword:Clone()
 

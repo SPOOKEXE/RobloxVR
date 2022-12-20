@@ -1,9 +1,16 @@
+local RunService = game:GetService('RunService')
+local UserInputService = game:GetService('UserInputService')
+
+local Players = game:GetService('Players')
+local LocalPlayer = Players.LocalPlayer
 
 local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local VRService = game:GetService('VRService')
 local VRModule = require(ReplicatedStorage:WaitForChild('VRModule'))
 local VRCharacter = require(ReplicatedStorage:WaitForChild('VRCharacter'))
 
 local Terrain = workspace.Terrain
+local CurrentCamera = workspace.CurrentCamera
 
 VRModule:AddExtensionSystem( VRCharacter )
 
@@ -17,16 +24,62 @@ local HeadAttachment = Instance.new('Attachment')
 HeadAttachment.Visible = true
 HeadAttachment.Parent = Terrain
 
-VRModule.Events.UserCFrameChanged:Connect(function(userCFrameEnum, cframeValue)
-	if userCFrameEnum == Enum.UserCFrame.LeftHand then
-		--LeftHandAttachment.WorldPosition = 
-	elseif userCFrameEnum == Enum.UserCFrame.RightHand then
+local LastHeadCFrame = CFrame.new()
+local BodyCFrame = CFrame.new()
+local ActiveCharacterInstance = false
 
-	elseif userCFrameEnum == Enum.UserCFrame.Head then
-
+VRModule:OnSignalEvent('VREnableToggle', function(IsEnabled)
+	print('VRModule - ', IsEnabled and 'Enabled' or 'Disabled')
+	if IsEnabled then
+		CurrentCamera.CameraType = Enum.CameraType.Scriptable
+		VRModule.VRMaid:Give(RunService.Heartbeat:Connect(function()
+			BodyCFrame = ActiveCharacterInstance and ActiveCharacterInstance:GetPivot() or CFrame.new()
+			local ClampedYOffset = Vector3.new( 0, math.clamp(LastHeadCFrame.Y, -3, 3), 0 )
+			local YLockedPositionOffset = Vector3.new(LastHeadCFrame.X, 0, LastHeadCFrame.Z)
+			CurrentCamera.CFrame = BodyCFrame + (YLockedPositionOffset + ClampedYOffset)
+		end))
+	else
+		CurrentCamera.CameraType = Enum.CameraType.Custom
 	end
 end)
 
-VRModule:Enable()
+local function onCFrameUpdated(userCFrameEnum, cframeValue)
+	if typeof(userCFrameEnum) == 'EnumItem' then
+		print('cframe update; ', userCFrameEnum.Name)
+	end
+	if userCFrameEnum == Enum.UserCFrame.LeftHand then
+		LeftHandAttachment.WorldPosition = (BodyCFrame * LastHeadCFrame * cframeValue).Position
+	elseif userCFrameEnum == Enum.UserCFrame.RightHand then
+		RightHandAttachment.WorldPosition = (BodyCFrame * LastHeadCFrame * cframeValue).Position
+	elseif userCFrameEnum == Enum.UserCFrame.Head then
+		HeadAttachment.WorldPosition = BodyCFrame.Position + (cframeValue.Position + (cframeValue.LookVector * 5))
+		LastHeadCFrame = cframeValue
+	end
+end
 
--- setup client-side attachments at hand / where head is looking
+task.defer(onCFrameUpdated, nil, nil)
+VRModule:OnSignalEvent('UserCFrameChanged', onCFrameUpdated)
+
+local function onCharacterAdded(Character)
+	if not Character then
+		return
+	end
+	ActiveCharacterInstance = Character
+end
+
+task.defer(onCharacterAdded, LocalPlayer.Character)
+LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+if VRService.VREnabled then
+	VRModule:Enable()
+else
+	VRModule:Disable()
+end
+
+VRService:GetPropertyChangedSignal('VREnabled'):Connect(function()
+	if VRService.VREnabled then
+		VRModule:Enable()
+	else
+		VRModule:Disable()
+	end
+end)

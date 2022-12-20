@@ -72,9 +72,9 @@ function Module:OnSignalEvent(EventName : AvailableEventNames, ...) : { RBXScrip
 end
 
 function Module:FireSignal(EventName : AvailableEventNames, ...)
-	local CallbackEventClass = Module.Events[EventName]
-	if CallbackEventClass then
-		CallbackEventClass:Fire(...)
+	local SignalClass = Module.Events[EventName]
+	if SignalClass then
+		SignalClass:Fire(...)
 	end
 end
 
@@ -115,6 +115,7 @@ if RunService:IsServer() then
 		end
 		TargetInstance:SetAttribute('ServerVRObject', true)
 		CollectionService:AddTag(TargetInstance, 'ServerVRObject')
+		VREvent:FireAllClients('SetVRObjectConfig', TargetInstance, PropertyTable, overwriteEntireTable)
 	end
 
 	function Module:GetActiveVRObjectConfig(TargetInstance)
@@ -125,6 +126,7 @@ if RunService:IsServer() then
 		TargetInstance:SetAttribute('ServerVRObject', nil)
 		CollectionService:RemoveTag(TargetInstance, 'ServerVRObject')
 		ActiveVRObjectConfig[TargetInstance] = nil
+		VREvent:FireAllClients('RemoveVRObjectConfig', TargetInstance)
 	end
 
 	function Module:ToggleVRMovement(Enabled, TargetPlayers)
@@ -161,8 +163,10 @@ if RunService:IsServer() then
 	end
 
 	VREvent.OnServerEvent:Connect(function(LocalPlayer, Job, ...)
+		print(LocalPlayer.Name, Job)
 		local Args = {...}
 		if Job == 'ToggleVR' and HasArgTypes(Args, {'boolean'}) then
+			print(LocalPlayer.Name, 'has toggled VR: ', Args[1])
 			LocalPlayer:SetAttribute('VREnabled', Args[1])
 			Module:FireSignal('VREnableToggle', LocalPlayer, ...)
 		elseif Job == 'UserCFrameEnabled' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
@@ -211,7 +215,6 @@ else
 		end
 		TargetInstance:SetAttribute('ClientVRObject', true)
 		CollectionService:AddTag(TargetInstance, 'ClientVRObject')
-		VREvent:FireAllClients('SetVRObjectConfig', TargetInstance, PropertyTable, overwriteEntireTable)
 	end
 
 	function Module:GetActiveVRObjectConfig(TargetInstance)
@@ -222,7 +225,6 @@ else
 		TargetInstance:SetAttribute('ClientVRObject', nil)
 		CollectionService:RemoveTag(TargetInstance, 'ClientVRObject')
 		ActiveVRObjectConfig[TargetInstance] = nil
-		VREvent:FireAllClients('RemoveVRObjectConfig', TargetInstance)
 	end
 
 	local function InputObjectToTable(InputObject)
@@ -239,36 +241,44 @@ else
 		VREvent:FireServer('VRToggle', true)
 
 		Module.VRMaid:Give(VRService.UserCFrameEnabled:Connect(function(userCFrameEnum, isEnabled)
+			Module:FireSignal('UserCFrameEnabled', userCFrameEnum, isEnabled)
 			VREvent:FireServer('UserCFrameEnabled', userCFrameEnum, isEnabled)
 		end))
 
 		Module.VRMaid:Give(VRService.UserCFrameChanged:Connect(function(userCFrameEnum, cframeValue)
+			Module:FireSignal('UserCFrameChanged', userCFrameEnum, cframeValue)
 			VREvent:FireServer('UserCFrameChanged', userCFrameEnum, cframeValue)
 		end))
 
 		Module.VRMaid:Give(VRService.NavigationRequested:Connect(function(cframeValue, userCFrameEnum)
+			Module:FireSignal('NavigationRequested', userCFrameEnum, cframeValue)
 			VREvent:FireServer('NavigationRequested', userCFrameEnum, cframeValue)
 		end))
 
 		Module.VRMaid:Give(VRService.TouchpadModeChanged:Connect(function(TouchpadEnum, TouchpadModeEnum)
+			Module:FireSignal('TouchpadModeChanged', TouchpadEnum, TouchpadModeEnum)
 			VREvent:FireServer('TouchpadModeChanged', TouchpadEnum, TouchpadModeEnum)
 		end))
 
 		Module.VRMaid:Give(UserInputService.InputBegan:Connect(function(InputObject, WasProcessed)
+			Module:FireSignal('InputBegan', InputObject, WasProcessed)
 			VREvent:FireServer('InputBegan', InputObjectToTable(InputObject), WasProcessed)
 		end))
 
 		Module.VRMaid:Give(UserInputService.InputEnded:Connect(function(InputObject, WasProcessed)
+			Module:FireSignal('InputEnded', InputObject, WasProcessed)
 			VREvent:FireServer('InputEnded', InputObjectToTable(InputObject), WasProcessed)
 		end))
 
 		Module.VRMaid:Give(function()
+			Module:FireSignal('VREnabled', false)
 			VREvent:FireServer('VRToggle', false)
 			for _, extension in ipairs( ExtensionModules ) do
 				extension:Disable()
 			end
 		end)
 
+		Module:FireSignal('VREnabled', true)
 		for _, extension in ipairs( ExtensionModules ) do
 			extension:Enable()
 		end

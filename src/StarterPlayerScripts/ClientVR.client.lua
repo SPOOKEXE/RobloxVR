@@ -31,6 +31,7 @@ local ActiveCharacterInstance = false
 VRModule:OnSignalEvent('VREnableToggle', function(IsEnabled)
 	print('VRModule - ', IsEnabled and 'Enabled' or 'Disabled')
 	if IsEnabled then
+		LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
 		CurrentCamera.CameraType = Enum.CameraType.Scriptable
 		VRModule.VRMaid:Give(RunService.Heartbeat:Connect(function()
 			BodyCFrame = ActiveCharacterInstance and ActiveCharacterInstance:GetPivot() or CFrame.new()
@@ -39,6 +40,7 @@ VRModule:OnSignalEvent('VREnableToggle', function(IsEnabled)
 			CurrentCamera.CFrame = BodyCFrame + (YLockedPositionOffset + ClampedYOffset)
 		end))
 	else
+		LocalPlayer.CameraMode = Enum.CameraMode.Classic
 		CurrentCamera.CameraType = Enum.CameraType.Custom
 	end
 end)

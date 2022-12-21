@@ -10,8 +10,8 @@ VRModule:OnSignalEvent('VREnableToggle', function(LocalPlayer, VREnabled)
 	print(LocalPlayer.Name, 'has', VREnabled and 'enabled' or 'disabled', 'VR')
 end)
 
-local AssetsFolder = ReplicatedStorage.Assets
-local SampleVRSword = AssetsFolder.Weapons.GreatSword:Clone()
+-- local AssetsFolder = ReplicatedStorage.Assets
+-- local SampleVRSword = AssetsFolder.Weapons.GreatSword:Clone()
 
 local function onPlayerAdded(LocalPlayer)
 	-- setup weapon in hand + replication or smthing

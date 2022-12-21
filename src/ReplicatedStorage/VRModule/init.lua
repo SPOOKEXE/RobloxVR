@@ -198,7 +198,12 @@ else
 	--local ContextActionService = game:GetService('ContextActionService')
 	local UserInputService = game:GetService('UserInputService')
 
+	local Players = game:GetService('Players')
+	local LocalPlayer = Players.LocalPlayer
+
 	local ClientModules = require(script.Client)
+
+	local CurrentCamera = workspace.CurrentCamera
 
 	local ActiveVRObjectConfig = {}
 
@@ -240,6 +245,21 @@ else
 		Module.VREnabled = true
 		VREvent:FireServer('VRToggle', true)
 
+		CurrentCamera.CameraType = Enum.CameraType.Scriptable -- allows camera manipulation
+		LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+		Module.VRMaid:Give(CurrentCamera:GetPropertyChangedSignal('CameraType'):Connect(function()
+			CurrentCamera.CameraType = Enum.CameraType.Scriptable -- allows camera manipulation
+		end))
+		Module.VRMaid:Give(LocalPlayer:GetPropertyChangedSignal('CameraMode'):Connect(function()
+			LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+		end))
+
+		-- local yValue = (2 + self.HeadClass.ActualHeadCFrame.Position.Y)
+		-- 	yValue = yValue > 3 and 3 or yValue
+		-- 	local origCF = self.CentreBlock.CFrame * CFrame.new(0, yValue, 0)
+		-- 	self.Camera.CFrame = origCF
+		-- 	Origin = origCF
+
 		Module.VRMaid:Give(VRService.UserCFrameEnabled:Connect(function(userCFrameEnum, isEnabled)
 			Module:FireSignal('UserCFrameEnabled', userCFrameEnum, isEnabled)
 			VREvent:FireServer('UserCFrameEnabled', userCFrameEnum, isEnabled)
@@ -273,6 +293,7 @@ else
 		Module.VRMaid:Give(function()
 			Module:FireSignal('VREnabled', false)
 			VREvent:FireServer('VRToggle', false)
+			CurrentCamera.CameraType = Enum.CameraType.Custom
 			for _, extension in ipairs( ExtensionModules ) do
 				extension:Disable()
 			end
@@ -299,6 +320,7 @@ else
 
 	VREvent.OnClientEvent:Connect(function(Job, ...)
 		--local Args = {...}
+		print('OnClientEvent; ', Job)
 		if Job == 'SetVRObjectConfig' then
 			Module:SetVRObjectConfig(...)
 		elseif Job == 'RemoveVRObjectConfig' then
@@ -308,7 +330,8 @@ else
 
 	VRFunction.OnClientInvoke = function(Job, ...)
 		local Args = {...}
-
+		print('OnClientInvoke; ', Job)
+		return false
 	end
 
 end

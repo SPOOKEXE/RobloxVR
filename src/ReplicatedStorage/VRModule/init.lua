@@ -24,6 +24,15 @@ type AvailableEventNames =
 
 local ExtensionModules = {}
 
+local function CFrameToRemoteData(CF) : (number, number, number, number, number, number)
+	return CF.X, CF.Y, CF.Z, CF.LookVector.X, CF.LookVector.Y, CF.LookVector.Z
+end
+
+local function RemoteDataToCFrame(X,Y,Z,LX,LY,LZ) : CFrame
+	local Position = Vector3.new(X, Y, Z)
+	return CFrame.lookAt(Position, Position + Vector3.new(LX, LY, LZ))
+end
+
 -- // Module // --
 local Module = {}
 
@@ -172,9 +181,11 @@ if RunService:IsServer() then
 		elseif Job == 'UserCFrameEnabled' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
 			Module:FireSignal('UserCFrameEnabled', LocalPlayer, ...)
 		elseif Job == 'UserCFrameChanged' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
-			Module:FireSignal('UserCFrameChanged', LocalPlayer, ...)
+			local Identifier = table.remove(Args, 1)
+			Module:FireSignal('UserCFrameChanged', LocalPlayer, Identifier, RemoteDataToCFrame(unpack(Args)))
 		elseif Job == 'NavigationRequested' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
-			Module:FireSignal('NavigationRequested', LocalPlayer, ...)
+			local Identifier = table.remove(Args, 1)
+			Module:FireSignal('NavigationRequested', LocalPlayer, Identifier, RemoteDataToCFrame(unpack(Args)))
 		elseif Job == 'TouchpadModeChanged' and HasArgTypes(Args, {'EnumItem', 'EnumItem'}) then
 			Module:FireSignal('TouchpadModeChanged', LocalPlayer, ...)
 		elseif Job == 'TouchpadModeChanged' and HasArgTypes(Args, {'table', 'table'}) then
@@ -188,7 +199,6 @@ if RunService:IsServer() then
 
 	VRFunction.OnServerInvoke = function(LocalPlayer, Job, ...)
 		-- local Args = {...}
-
 		return false
 	end
 
@@ -267,12 +277,12 @@ else
 
 		Module.VRMaid:Give(VRService.UserCFrameChanged:Connect(function(userCFrameEnum, cframeValue)
 			Module:FireSignal('UserCFrameChanged', userCFrameEnum, cframeValue)
-			VREvent:FireServer('UserCFrameChanged', userCFrameEnum, cframeValue)
+			VREvent:FireServer('UserCFrameChanged', userCFrameEnum, CFrameToRemoteData(cframeValue))
 		end))
 
 		Module.VRMaid:Give(VRService.NavigationRequested:Connect(function(cframeValue, userCFrameEnum)
 			Module:FireSignal('NavigationRequested', userCFrameEnum, cframeValue)
-			VREvent:FireServer('NavigationRequested', userCFrameEnum, cframeValue)
+			VREvent:FireServer('NavigationRequested', userCFrameEnum, CFrameToRemoteData(cframeValue))
 		end))
 
 		Module.VRMaid:Give(VRService.TouchpadModeChanged:Connect(function(TouchpadEnum, TouchpadModeEnum)

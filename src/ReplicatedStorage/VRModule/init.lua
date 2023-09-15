@@ -1,347 +1,188 @@
 local RunService = game:GetService('RunService')
-local CollectionService = game:GetService('CollectionService')
+local VRService = game:GetService('VRService')
+local UserInputService = game:GetService('UserInputService')
+local Players = game:GetService('Players')
 
-local SharedModules = require(script.Shared)
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local VRUtility = require(ReplicatedStorage:WaitForChild('VRUtility'))
 
-local MaidClassModule = SharedModules.Classes.Maid
-local SignalClassModule = SharedModules.Classes.Signal
+local VRBridge = VRUtility.RNet.Create('VRBridge')
 
-local VREvent = SharedModules.Services.RemoteService:GetRemote('VREvent', 'RemoteEvent', false)
-local VRFunction = SharedModules.Services.RemoteService:GetRemote('VRFunction', 'RemoteFunction', false)
+local CurrentCamera = workspace.CurrentCamera
 
-type VRObjectConfig = {
-	PressAction : boolean?,
-	HoldAction : boolean?,
-	ReleaseAction : boolean?,
-	HoverMove : boolean?,
-	HoverBegin : boolean?,
-	HoverEnd : boolean?,
+local REMOTE_COMMANDS = {
+	VRDataClean = 0, -- cleanup the player's vr data on the server
+	VREnabled = 1, -- when vr is toggled on/off
+	UserCFrameState = 2, -- when a user-enum updates
+	UserCFrameUpdate = 3, -- when a user-enum is toggled on/off
+	CameraCFrameUpdate = 4, -- when the client's camera updates
+	InputBegan = 5, -- when a input begins
+	InputEnded = 6, -- when a input ends
+	NavigationRequested = 7, -- when navigation is requested
 }
 
-type AvailableEventNames =
-	'UserCFrameChanged' | 'UserCFrameEnabled' | 'NavigationRequested' | 'TouchpadModeChanged' | 'InputBegan' | 'InputEnded' |
-	'PressObjectAction' | 'HoldObjectAction' | 'ReleaseObjectAction' | 'OnObjectHoverEnter' | 'OnObjectHoverMove' | 'OnObjectHoverLeave'
-
-local ExtensionModules = {}
-
-local function CFrameToRemoteData(CF) : (number, number, number, number, number, number)
-	return CF.X, CF.Y, CF.Z, CF.LookVector.X, CF.LookVector.Y, CF.LookVector.Z
-end
-
-local function RemoteDataToCFrame(X,Y,Z,LX,LY,LZ) : CFrame
-	local Position = Vector3.new(X, Y, Z)
-	return CFrame.lookAt(Position, Position + Vector3.new(LX, LY, LZ))
+local function InputObjectToTable( inputObject : InputObject )
+	return {
+		KeyCode = inputObject.KeyCode,
+		UserInputState = inputObject.UserInputState,
+		UserInputType = inputObject.UserInputType,
+		Position = inputObject.Position,
+		-- Delta = inputObject.Delta,
+	}
 end
 
 -- // Module // --
 local Module = {}
 
-Module.SharedModules = SharedModules
-
+Module.EventCallbacks = VRUtility.Maid.New()
 Module.Events = {
-	VREnableToggle = SignalClassModule.New(),
+	VREnabled = VRUtility.Event.New(),
 
-	UserCFrameChanged = SignalClassModule.New(),
-	UserCFrameEnabled = SignalClassModule.New(),
-	NavigationRequested = SignalClassModule.New(),
-	TouchpadModeChanged = SignalClassModule.New(),
-	InputBegan = SignalClassModule.New(),
-	InputEnded = SignalClassModule.New(),
+	CameraCFrameUpdated = VRUtility.Event.New(),
+	UserCFrameEnabled = VRUtility.Event.New(),
+	UserCFrameUpdated = VRUtility.Event.New(),
 
-	PressObjectAction = SignalClassModule.New(),
-	HoldObjectAction = SignalClassModule.New(),
-	ReleaseObjectAction = SignalClassModule.New(),
-	OnObjectHoverEnter = SignalClassModule.New(),
-	OnObjectHoverMove = SignalClassModule.New(),
-	OnObjectHoverLeave = SignalClassModule.New(),
-
-	VRObjectAdded = SignalClassModule.New(),
-	VRObjectRemoved = SignalClassModule.New(),
+	NavigationRequested = VRUtility.Event.New(),
+	InputBegan = VRUtility.Event.New(),
+	InputEnded = VRUtility.Event.New(),
+	TouchpadEnabled = VRUtility.Event.New(),
 }
 
-function Module:OnSignalEvent(EventName : AvailableEventNames, ...) : { RBXScriptConnection }
-	local Connections = {}
-	local CallbackEventClass = Module.Events[EventName]
-	if CallbackEventClass then
-		for _, callback in ipairs( {...} ) do
-			-- ignore anything that is not a function
-			if typeof(callback) ~= 'function' then
-				continue
-			end
-			-- pcall to prevent errors from stopping the loop
-			local success, err = pcall(function()
-				table.insert( Connections, CallbackEventClass:Connect(callback) )
-			end)
-			if not success then
-				warn(err)
-			end
-		end
+function Module:OnEvent( eventName : string, ... )
+	local eventInstance = Module.Events[eventName]
+	assert( eventInstance, "eventName is unavailable: " .. tostring(eventName) )
+
+	local connections = { }
+
+	local callbacks = { ... }
+	for _, callback in ipairs( callbacks ) do
+		assert( typeof(callback) == "function", "callbacks must be functions." )
+		eventInstance:Connect( callback )
 	end
-	return Connections
+
+	return connections
 end
 
-function Module:FireSignal(EventName : AvailableEventNames, ...)
-	local SignalClass = Module.Events[EventName]
-	if SignalClass then
-		SignalClass:Fire(...)
-	end
+function Module:FireEvent( eventName : string, ... )
+	local eventInstance = Module.Events[eventName]
+	assert( eventInstance, "eventName is unavailable: " .. tostring(eventName) )
+
+	eventInstance:Fire(...)
 end
 
 if RunService:IsServer() then
 
-	local Players = game:GetService('Players')
+	function Module:CleanupVRData( LocalPlayer )
 
-	local ServerModules = require(script.Server)
-
-	local ActiveVRObjectConfig = {}
-
-	Module.ServerModules = ServerModules
-
-	function Module:DoesPlayerHaveVREnabled(LocalPlayer)
-		return LocalPlayer:GetAttribute('VREnabled')
 	end
 
-	function Module:SetVRObjectOwnership(TargetInstance, OwnerInstance)
-		local Descendants = TargetInstance:GetDescendants()
-		table.insert(Descendants, TargetInstance)
-		for _, basePart in ipairs( Descendants ) do
-			if basePart:IsA('BasePart') then
-				if basePart.Anchored then
-					warn('BasePart is anchored, cannot set network ownership: ', basePart:GetFullName())
-					continue
-				end
-				basePart:SetNetworkOwner(OwnerInstance)
-			end
-		end
+	function Module:CleanupEventCallbacks()
+		Module.EventCallbacks:Cleanup()
 	end
 
-	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig, overwriteEntireTable : boolean?)
-		if overwriteEntireTable or (not ActiveVRObjectConfig[TargetInstance]) then
-			ActiveVRObjectConfig[TargetInstance] = { }
-		end
-		for propertyName, propertyValue in pairs( PropertyTable ) do
-			ActiveVRObjectConfig[TargetInstance][propertyName] = propertyValue
-		end
-		TargetInstance:SetAttribute('ServerVRObject', true)
-		CollectionService:AddTag(TargetInstance, 'ServerVRObject')
-		VREvent:FireAllClients('SetVRObjectConfig', TargetInstance, PropertyTable, overwriteEntireTable)
+	function Module:SetupEventCallbacks()
+
 	end
 
-	function Module:GetActiveVRObjectConfig(TargetInstance)
-		return ActiveVRObjectConfig[TargetInstance]
+	function Module:Init()
+
+		Players.PlayerRemoving:Connect(function(LocalPlayer)
+			Module:CleanupVRData( LocalPlayer )
+		end)
+
+		VRBridge:OnServerEvent(function(LocalPlayer : Player, ...)
+			local Args = {...}
+			local Command = table.remove(Args, 1)
+			print(LocalPlayer.Name, Command, Args)
+		end)
+
 	end
 
-	function Module:RemoveVRObject(TargetInstance)
-		TargetInstance:SetAttribute('ServerVRObject', nil)
-		CollectionService:RemoveTag(TargetInstance, 'ServerVRObject')
-		ActiveVRObjectConfig[TargetInstance] = nil
-		VREvent:FireAllClients('RemoveVRObjectConfig', TargetInstance)
+	function Module:Start()
+
 	end
 
-	function Module:ToggleVRMovement(Enabled, TargetPlayers)
-		if TargetPlayers then
-			for _, LocalPlayer in ipairs( TargetPlayers ) do
-				LocalPlayer:SetAttribute('VRMovement', Enabled)
-				VREvent:FireClient(LocalPlayer, 'MovementToggle', Enabled)
-			end
-		else
-			VREvent:FireAllClients('MovementToggle', Enabled)
-			for _, LocalPlayer in ipairs( Players:GetPlayers() ) do
-				LocalPlayer:SetAttribute('VRMovement', Enabled)
-			end
-		end
-	end
+	function Module:Stop()
 
-	function Module:AddExtensionSystem(extensionModule)
-		table.insert(ExtensionModules, extensionModule)
-		extensionModule:Init(Module)
-	end
-
-	local function HasArgTypes(OrderedArgs, OrderedTypes)
-		for index = 1, #OrderedArgs do
-			local compareTo = OrderedTypes[index] or OrderedTypes[#OrderedTypes]
-			if OrderedTypes[index] and ( typeof(OrderedArgs[index]) ~= compareTo) then
-				return false
-			end
-		end
-		return true
-	end
-
-	local function ValidateInputObjectTable(Tbl)
-		return HasArgTypes({Tbl, Tbl.KeyCode, Tbl.UserInputType}, {'EnumItem'})
-	end
-
-	VREvent.OnServerEvent:Connect(function(LocalPlayer, Job, ...)
-		print(LocalPlayer.Name, Job)
-		local Args = {...}
-		if Job == 'ToggleVR' and HasArgTypes(Args, {'boolean'}) then
-			print(LocalPlayer.Name, 'has toggled VR: ', Args[1])
-			LocalPlayer:SetAttribute('VREnabled', Args[1])
-			Module:FireSignal('VREnableToggle', LocalPlayer, ...)
-		elseif Job == 'UserCFrameEnabled' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
-			Module:FireSignal('UserCFrameEnabled', LocalPlayer, ...)
-		elseif Job == 'UserCFrameChanged' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
-			local Identifier = table.remove(Args, 1)
-			Module:FireSignal('UserCFrameChanged', LocalPlayer, Identifier, RemoteDataToCFrame(unpack(Args)))
-		elseif Job == 'NavigationRequested' and HasArgTypes(Args, {'EnumItem', 'CFrame'}) then
-			local Identifier = table.remove(Args, 1)
-			Module:FireSignal('NavigationRequested', LocalPlayer, Identifier, RemoteDataToCFrame(unpack(Args)))
-		elseif Job == 'TouchpadModeChanged' and HasArgTypes(Args, {'EnumItem', 'EnumItem'}) then
-			Module:FireSignal('TouchpadModeChanged', LocalPlayer, ...)
-		elseif Job == 'TouchpadModeChanged' and HasArgTypes(Args, {'table', 'table'}) then
-			Module:FireSignal('TouchpadModeChanged', LocalPlayer, ...)
-		elseif Job == 'InputBegan' and HasArgTypes(Args, {'table', 'boolean'}) and ValidateInputObjectTable(Args[1]) then
-			Module:FireSignal('InputBegan', LocalPlayer, ...)
-		elseif Job == 'InputEnded' and HasArgTypes(Args, {'table', 'boolean'}) and ValidateInputObjectTable(Args[1]) then
-			Module:FireSignal('InputEnded', LocalPlayer, ...)
-		end
-	end)
-
-	VRFunction.OnServerInvoke = function(LocalPlayer, Job, ...)
-		-- local Args = {...}
-		return false
 	end
 
 else
 
-	local VRService = game:GetService('VRService')
-	--local ContextActionService = game:GetService('ContextActionService')
-	local UserInputService = game:GetService('UserInputService')
-
-	local Players = game:GetService('Players')
 	local LocalPlayer = Players.LocalPlayer
 
-	local ClientModules = require(script.Client)
+	local PlayerModule = require(LocalPlayer:WaitForChild('PlayerScripts'):WaitForChild('PlayerModule'))
+	local PlayerControls = PlayerModule:GetControls()
 
-	local CurrentCamera = workspace.CurrentCamera
-
-	local ActiveVRObjectConfig = {}
-
-	Module.ClientModules = ClientModules
-	Module.VRMaid = MaidClassModule.New()
-	Module.VREnabled = false
-
-	function Module:SetVRObjectConfig(TargetInstance, PropertyTable : VRObjectConfig, overwriteEntireTable : boolean?)
-		if overwriteEntireTable or (not ActiveVRObjectConfig[TargetInstance]) then
-			ActiveVRObjectConfig[TargetInstance] = { }
-		end
-		for propertyName, propertyValue in pairs( PropertyTable ) do
-			ActiveVRObjectConfig[TargetInstance][propertyName] = propertyValue
-		end
-		TargetInstance:SetAttribute('ClientVRObject', true)
-		CollectionService:AddTag(TargetInstance, 'ClientVRObject')
+	function Module:CleanupEventCallbacks()
+		Module.EventCallbacks:Cleanup()
 	end
 
-	function Module:GetActiveVRObjectConfig(TargetInstance)
-		return ActiveVRObjectConfig[TargetInstance]
-	end
+	function Module:SetupEventCallbacks()
 
-	function Module:RemoveVRObject(TargetInstance)
-		TargetInstance:SetAttribute('ClientVRObject', nil)
-		CollectionService:RemoveTag(TargetInstance, 'ClientVRObject')
-		ActiveVRObjectConfig[TargetInstance] = nil
-	end
+		Module:CleanupEventCallbacks() -- force cleanup before-hand
 
-	local function InputObjectToTable(InputObject)
-		return {KeyCode = InputObject.KeyCode, UserInputType = InputObject.UserInputType}
-	end
+		Module.EventCallbacks:Give(
+			VRService:GetPropertyChangedSignal('VREnabled'):Connect(function()
+				Module:FireEvent('VREnabled', VRService.VREnabled )
+			end),
 
-	function Module:Enable()
-		if Module.VREnabled then
-			return
-		end
-		print(script.Name, 'Enabled')
+			VRService.NavigationRequested:Connect(function(value : CFrame, inputUserCFrame : Enum.UserCFrame)
+				Module:FireEvent('NavigationRequested', value, inputUserCFrame)
+			end),
 
-		Module.VREnabled = true
-		VREvent:FireServer('VRToggle', true)
+			VRService.TouchpadModeChanged:Connect(function(touchpad : Enum.VRTouchpad, mode : Enum.VRTouchpadMode)
+				Module:FireEvent('TouchpadEnabled', touchpad, mode)
+			end),
 
-		CurrentCamera.CameraType = Enum.CameraType.Scriptable -- allows camera manipulation
-		LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
-		Module.VRMaid:Give(CurrentCamera:GetPropertyChangedSignal('CameraType'):Connect(function()
-			CurrentCamera.CameraType = Enum.CameraType.Scriptable -- allows camera manipulation
-		end))
-		Module.VRMaid:Give(LocalPlayer:GetPropertyChangedSignal('CameraMode'):Connect(function()
-			LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
-		end))
+			VRService.UserCFrameEnabled:Connect(function(userCFrame : Enum.UserCFrame, isEnabled : boolean)
+				Module:FireEvent('UserCFrameEnabled', userCFrame, isEnabled)
+			end),
 
-		-- local yValue = (2 + self.HeadClass.ActualHeadCFrame.Position.Y)
-		-- 	yValue = yValue > 3 and 3 or yValue
-		-- 	local origCF = self.CentreBlock.CFrame * CFrame.new(0, yValue, 0)
-		-- 	self.Camera.CFrame = origCF
-		-- 	Origin = origCF
+			VRService.UserCFrameChanged:Connect(function(userCFrame : Enum.UserCFrame, value : CFrame)
+				Module:FireEvent('UserCFrameChanged', userCFrame, value)
+			end),
 
-		Module.VRMaid:Give(VRService.UserCFrameEnabled:Connect(function(userCFrameEnum, isEnabled)
-			Module:FireSignal('UserCFrameEnabled', userCFrameEnum, isEnabled)
-			VREvent:FireServer('UserCFrameEnabled', userCFrameEnum, isEnabled)
-		end))
+			UserInputService.InputBegan:Connect(function(inputObject : InputObject, wasProcessed : boolean)
+				if not wasProcessed then
+					local data = InputObjectToTable( inputObject )
+					Module:FireEvent('InputBegan', data)
+				end
+			end),
 
-		Module.VRMaid:Give(VRService.UserCFrameChanged:Connect(function(userCFrameEnum, cframeValue)
-			Module:FireSignal('UserCFrameChanged', userCFrameEnum, cframeValue)
-			VREvent:FireServer('UserCFrameChanged', userCFrameEnum, CFrameToRemoteData(cframeValue))
-		end))
+			UserInputService.InputEnded:Connect(function(inputObject : InputObject, wasProcessed : boolean)
+				if not wasProcessed then
+					local data = InputObjectToTable( inputObject )
+					Module:FireEvent('InputEnded', data)
+				end
+			end)
+		)
 
-		Module.VRMaid:Give(VRService.NavigationRequested:Connect(function(cframeValue, userCFrameEnum)
-			Module:FireSignal('NavigationRequested', userCFrameEnum, cframeValue)
-			VREvent:FireServer('NavigationRequested', userCFrameEnum, CFrameToRemoteData(cframeValue))
-		end))
-
-		Module.VRMaid:Give(VRService.TouchpadModeChanged:Connect(function(TouchpadEnum, TouchpadModeEnum)
-			Module:FireSignal('TouchpadModeChanged', TouchpadEnum, TouchpadModeEnum)
-			VREvent:FireServer('TouchpadModeChanged', TouchpadEnum, TouchpadModeEnum)
-		end))
-
-		Module.VRMaid:Give(UserInputService.InputBegan:Connect(function(InputObject, WasProcessed)
-			Module:FireSignal('InputBegan', InputObject, WasProcessed)
-			VREvent:FireServer('InputBegan', InputObjectToTable(InputObject), WasProcessed)
-		end))
-
-		Module.VRMaid:Give(UserInputService.InputEnded:Connect(function(InputObject, WasProcessed)
-			Module:FireSignal('InputEnded', InputObject, WasProcessed)
-			VREvent:FireServer('InputEnded', InputObjectToTable(InputObject), WasProcessed)
-		end))
-
-		Module.VRMaid:Give(function()
-			Module:FireSignal('VREnabled', false)
-			VREvent:FireServer('VRToggle', false)
-			CurrentCamera.CameraType = Enum.CameraType.Custom
-			for _, extension in ipairs( ExtensionModules ) do
-				extension:Disable()
-			end
+		Module.EventCallbacks:Give(function()
+			VRBridge:FireServer(REMOTE_COMMANDS.VRDataClean)
 		end)
 
-		Module:FireSignal('VREnabled', true)
-		for _, extension in ipairs( ExtensionModules ) do
-			extension:Enable()
-		end
 	end
 
-	function Module:Disable()
-		print(script.Name, 'Disabled')
-		Module.VRMaid:Cleanup()
+	function Module:Init()
+
+		VRBridge:OnClientEvent(function(...)
+			local Args = {...}
+			local Command = table.remove(Args, 1)
+			print(Command, Args)
+		end)
+
 	end
 
-	function Module:AddExtensionSystem(extensionModule)
-		extensionModule:Init(Module)
-		table.insert(ExtensionModules, extensionModule)
-		if Module.VREnabled then
-			extensionModule:Start()
-		end
+	function Module:Start()
+
+		Module:SetupEventCallbacks()
+
 	end
 
-	VREvent.OnClientEvent:Connect(function(Job, ...)
-		--local Args = {...}
-		print('OnClientEvent; ', Job)
-		if Job == 'SetVRObjectConfig' then
-			Module:SetVRObjectConfig(...)
-		elseif Job == 'RemoveVRObjectConfig' then
-			Module:RemoveVRObject(...)
-		end
-	end)
+	function Module:Stop()
 
-	VRFunction.OnClientInvoke = function(Job, ...)
-		local Args = {...}
-		print('OnClientInvoke; ', Job)
-		return false
+		Module:CleanupEventCallbacks()
+
 	end
 
 end
